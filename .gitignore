@@ -1,1 +1,6 @@
 /.env
+/.run/
+/frontend/node_modules/
+/frontend/dist/
+*.test
+coverage.out
