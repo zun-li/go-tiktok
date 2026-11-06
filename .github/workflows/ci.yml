@@ -18,6 +18,20 @@ jobs:
   backend:
     name: Backend
     runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: testpass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -ptestpass --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      TEST_MYSQL_DSN: root:testpass@tcp(127.0.0.1:3306)/go_tiktok_test?charset=utf8mb4&parseTime=True&loc=Local
     steps:
       - name: Checkout
         uses: actions/checkout@v4
