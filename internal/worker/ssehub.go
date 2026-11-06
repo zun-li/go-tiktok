@@ -9,7 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zun-li/go-tiktok/internal/auth"
+	"github.com/zun-li/go-tiktok/internal/account"
+	"github.com/zun-li/go-tiktok/internal/middleware/jwt"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -76,25 +77,14 @@ func sseAccountID(c *gin.Context) (uint, bool) {
 }
 
 func (h *SSEHub) SSERequireAuth() gin.HandlerFunc {
+	verify := jwt.JWTAuth(account.NewAccountRepository(h.db), nil)
 	return func(c *gin.Context) {
-		token := c.Query("token")
-		if token == "" {
-			token = c.GetHeader("Authorization")
-			if len(token) > 7 && token[:7] == "Bearer " {
-				token = token[7:]
+		if c.GetHeader("Authorization") == "" {
+			if token := c.Query("token"); token != "" {
+				c.Request.Header.Set("Authorization", "Bearer "+token)
 			}
 		}
-		if token == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing token"})
-			return
-		}
-		claims, err := auth.ParseToken(token)
-		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
-			return
-		}
-		c.Set("accountID", claims.AccountID)
-		c.Next()
+		verify(c)
 	}
 }
 
@@ -108,10 +98,12 @@ func (h *SSEHub) SSEHandler(c *gin.Context) {
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
 	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
 	c.Writer.WriteHeader(http.StatusOK)
 
 	ch := h.Subscribe(userID)
 	defer h.Unsubscribe(userID, ch)
+	c.Writer.Flush()
 
 	ctx := c.Request.Context()
 	flusher, _ := c.Writer.(http.Flusher)
