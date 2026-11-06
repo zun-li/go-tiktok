@@ -17,7 +17,8 @@ func SetRouter(db *gorm.DB, cache *rediscache.Client, rmq *rabbitmq.RabbitMQ) *g
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
 	r.Static("/static", "./.run/uploads")
 	repo := account.NewAccountRepository(db)
-	h := account.NewAccountHandler(account.NewAccountService(repo, cache))
+	service := account.NewAccountService(repo, cache)
+	h := account.NewAccountHandler(service)
 	a := r.Group("/account")
 	a.POST("/register", ratelimit.Limit(cache, "account_register", 5, time.Hour, ratelimit.KeyByIP), h.CreateAccount)
 	a.POST("/login", ratelimit.Limit(cache, "account_login", 10, time.Minute, ratelimit.KeyByIP), h.Login)
@@ -31,5 +32,6 @@ func SetRouter(db *gorm.DB, cache *rediscache.Client, rmq *rabbitmq.RabbitMQ) *g
 	protected.POST("/rename", h.Rename)
 	protected.POST("/uploadAvatar", h.UploadAvatar)
 	protected.POST("/updateProfile", h.UpdateProfile)
+	registerVideoRoutes(r, db, service, cache, rmq)
 	return r
 }

@@ -6,6 +6,7 @@ import (
 
 	"github.com/zun-li/go-tiktok/internal/account"
 	"github.com/zun-li/go-tiktok/internal/config"
+	"github.com/zun-li/go-tiktok/internal/video"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )
@@ -20,7 +21,7 @@ func NewDB(cfg config.DatabaseConfig) (*gorm.DB, error) {
 }
 
 func AutoMigrate(db *gorm.DB) error {
-	return db.AutoMigrate(&account.Account{})
+	return db.AutoMigrate(&account.Account{}, &video.Video{}, &video.OutboxMsg{}, &video.Tag{}, &video.VideoTag{})
 }
 
 func CloseDB(db *gorm.DB) error {
