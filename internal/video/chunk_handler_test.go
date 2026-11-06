@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	rediscache "github.com/zun-li/go-tiktok/internal/middleware/redis"
@@ -424,4 +425,46 @@ func TestChunkStatus(t *testing.T) {
 	uploadChunk(t, h, uploadID, 1, chunkHashes[1], chunks[1])
 	uploadChunk(t, h, uploadID, 2, chunkHashes[2], chunks[2])
 	assertStatus(3)
+}
+
+func TestConcurrentChunkUpload(t *testing.T) {
+	h, cleanup := setupTestEnv(t)
+	defer cleanup()
+	chunks, hashes, fileHash := makeTestChunks(t, 16, 1024)
+	uploadID := initUpload(t, h, "parallel.mp4", 16*1024, 1024, 16, fileHash)
+	// Construct contexts before starting goroutines, since helpers can fail tests.
+	contexts := make([]*gin.Context, len(chunks))
+	recorders := make([]*httptest.ResponseRecorder, len(chunks))
+	for i := range chunks {
+		contexts[i], recorders[i] = newMultipartContext(t, "/video/chunk/upload", map[string]string{"upload_id": uploadID, "chunk_index": fmt.Sprint(i), "chunk_hash": hashes[i]}, chunks[i])
+	}
+	var wg sync.WaitGroup
+	for i := range chunks {
+		wg.Add(1)
+		go func(i int) { defer wg.Done(); h.UploadChunk(contexts[i]) }(i)
+	}
+	wg.Wait()
+	for i, rec := range recorders {
+		if rec.Code != 200 {
+			t.Fatalf("chunk %d: %d %s", i, rec.Code, rec.Body.String())
+		}
+	}
+	ctx, rec := newJSONContext(t, "/video/chunk/complete", CompleteChunkUploadRequest{UploadID: uploadID})
+	h.CompleteChunkUpload(ctx)
+	if rec.Code != 200 {
+		t.Fatalf("parallel chunks lost: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRejectMergedHashMismatch(t *testing.T) {
+	h, cleanup := setupTestEnv(t)
+	defer cleanup()
+	chunks, hashes, _ := makeTestChunks(t, 1, 1024)
+	uploadID := initUpload(t, h, "bad.mp4", 1024, 1024, 1, "00000000000000000000000000000000")
+	uploadChunk(t, h, uploadID, 0, hashes[0], chunks[0])
+	ctx, rec := newJSONContext(t, "/video/chunk/complete", CompleteChunkUploadRequest{UploadID: uploadID})
+	h.CompleteChunkUpload(ctx)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid file accepted: %d %s", rec.Code, rec.Body.String())
+	}
 }

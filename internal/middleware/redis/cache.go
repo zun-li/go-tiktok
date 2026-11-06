@@ -44,3 +44,26 @@ func (c *Client) MGet(cacheCtx context.Context, cacheKeys ...string) ([]interfac
 	}
 	return c.rdb.MGet(cacheCtx, cacheKeys...).Result()
 }
+
+// MarkChunkUploaded atomically updates one bit without overwriting concurrent uploads.
+func (c *Client) MarkChunkUploaded(ctx context.Context, key string, index int, ttl time.Duration) error {
+	if c == nil || c.rdb == nil {
+		return errors.New("redis client not initialized")
+	}
+	const script = `
+local raw = redis.call('GET', KEYS[1])
+if not raw then return 0 end
+local session = cjson.decode(raw)
+session.uploaded_bits[tonumber(ARGV[1]) + 1] = true
+redis.call('SET', KEYS[1], cjson.encode(session), 'PX', ARGV[2])
+return 1
+`
+	result, err := c.rdb.Eval(ctx, script, []string{key}, index, ttl.Milliseconds()).Int()
+	if err != nil {
+		return err
+	}
+	if result != 1 {
+		return errors.New("upload session expired")
+	}
+	return nil
+}

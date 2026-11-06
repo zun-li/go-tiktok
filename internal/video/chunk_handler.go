@@ -2,6 +2,7 @@ package video
 
 import (
 	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/zun-li/go-tiktok/internal/middleware/jwt"
@@ -82,11 +84,16 @@ func (h *ChunkUploadHandler) InitChunkUpload(c *gin.Context) {
 	}
 
 	const maxSize = 200 << 20
-	if req.FileSize > maxSize {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "file size exceeds 200MB limit"})
+	if req.FileSize > maxSize || req.ChunkSize > ChunkSize || req.TotalChunks > 4096 || req.TotalChunks != int((req.FileSize+req.ChunkSize-1)/req.ChunkSize) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid file size, chunk size or chunk count"})
 		return
 	}
 
+	if hash, err := hex.DecodeString(req.FileHash); err != nil || len(hash) != md5.Size {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "file_hash must be an MD5 digest"})
+		return
+	}
+	req.FileHash = strings.ToLower(req.FileHash)
 	// Check for existing session (resume)
 	hashKey := h.hashKey(accountID, req.FileHash)
 	existingID, err := h.cache.GetBytes(c.Request.Context(), hashKey)
@@ -95,7 +102,7 @@ func (h *ChunkUploadHandler) InitChunkUpload(c *gin.Context) {
 		if sessErr == nil {
 			// Refresh TTL on resume
 			_ = h.cache.SetBytes(c.Request.Context(), hashKey, existingID, sessionTTL)
-			_ = h.saveSession(c, session)
+			_ = h.cache.Expire(c.Request.Context(), h.sessionKey(session.UploadID), sessionTTL)
 			c.JSON(http.StatusOK, gin.H{
 				"upload_id":       session.UploadID,
 				"uploaded_chunks": session.UploadedChunks(),
@@ -104,7 +111,11 @@ func (h *ChunkUploadHandler) InitChunkUpload(c *gin.Context) {
 		}
 	}
 
-	id, _ := randHex(16)
+	id, err := randHex(16)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to generate upload ID"})
+		return
+	}
 	uploadID := id + fmt.Sprintf("%d", time.Now().UnixNano())
 	session := &ChunkUploadSession{
 		UploadID:     uploadID,
@@ -177,6 +188,14 @@ func (h *ChunkUploadHandler) UploadChunk(c *gin.Context) {
 		return
 	}
 
+	expectedSize := session.ChunkSize
+	if req.ChunkIndex == session.TotalChunks-1 {
+		expectedSize = session.FileSize - int64(req.ChunkIndex)*session.ChunkSize
+	}
+	if f.Size != expectedSize {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "chunk size mismatch"})
+		return
+	}
 	chunkFile, err := f.Open()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read chunk"})
@@ -208,20 +227,28 @@ func (h *ChunkUploadHandler) UploadChunk(c *gin.Context) {
 		return
 	}
 
-	dst, err := os.Create(chunkPath)
+	dst, err := os.CreateTemp(tmpDir, "chunk-*")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save chunk"})
 		return
 	}
 	defer dst.Close()
+	defer os.Remove(dst.Name())
 
 	if _, err := io.Copy(dst, chunkFile); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save chunk"})
 		return
 	}
 
-	session.UploadedBits[req.ChunkIndex] = true
-	if err := h.saveSession(c, session); err != nil {
+	if err := dst.Close(); err != nil {
+		c.JSON(500, gin.H{"error": "failed to save chunk"})
+		return
+	}
+	if err := os.Rename(dst.Name(), chunkPath); err != nil {
+		c.JSON(500, gin.H{"error": "failed to save chunk"})
+		return
+	}
+	if err := h.cache.MarkChunkUploaded(c.Request.Context(), h.sessionKey(req.UploadID), req.ChunkIndex, sessionTTL); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update session"})
 		return
 	}
@@ -335,6 +362,8 @@ func (h *ChunkUploadHandler) CompleteChunkUpload(c *gin.Context) {
 	}
 	defer finalFile.Close()
 
+	hasher := md5.New()
+	var mergedSize int64
 	tmpDir := filepath.Join(".run", "uploads", "tmp", req.UploadID)
 	for i := 0; i < session.TotalChunks; i++ {
 		chunkPath := filepath.Join(tmpDir, fmt.Sprintf("%d", i))
@@ -345,7 +374,9 @@ func (h *ChunkUploadHandler) CompleteChunkUpload(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("chunk %d missing", i)})
 			return
 		}
-		_, err = io.Copy(finalFile, cf)
+		written, copyErr := io.Copy(io.MultiWriter(finalFile, hasher), cf)
+		mergedSize += written
+		err = copyErr
 		cf.Close()
 		if err != nil {
 			finalFile.Close()
@@ -354,7 +385,16 @@ func (h *ChunkUploadHandler) CompleteChunkUpload(c *gin.Context) {
 			return
 		}
 	}
-	finalFile.Close()
+	if err := finalFile.Close(); err != nil {
+		os.Remove(finalPath)
+		c.JSON(500, gin.H{"error": "failed to close merged file"})
+		return
+	}
+	if mergedSize != session.FileSize || !strings.EqualFold(fmt.Sprintf("%x", hasher.Sum(nil)), session.FileHash) {
+		os.Remove(finalPath)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "merged file size or hash mismatch"})
+		return
+	}
 
 	// Clean up temp chunks
 	_ = os.RemoveAll(tmpDir)
