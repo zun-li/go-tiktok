@@ -1,64 +1,102 @@
 package main
 
 import (
+	"context"
+	"github.com/zun-li/go-tiktok/internal/config"
+	"github.com/zun-li/go-tiktok/internal/db"
+	apphttp "github.com/zun-li/go-tiktok/internal/http"
+	rabbitmq "github.com/zun-li/go-tiktok/internal/middleware/rabbitmq"
+	rediscache "github.com/zun-li/go-tiktok/internal/middleware/redis"
+	"github.com/zun-li/go-tiktok/internal/observability"
 	"log"
-	"net/http"
 	"os"
+	"strconv"
+	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
-	"github.com/zun-li/go-tiktok/internal/handler"
-	"github.com/zun-li/go-tiktok/internal/middleware"
-	"github.com/zun-li/go-tiktok/internal/model"
-	"gorm.io/driver/mysql"
-	"gorm.io/gorm"
 )
 
 func main() {
+	// 加载 .env（本地开发）
 	if err := godotenv.Load(); err != nil {
-		log.Fatalf("加载 .env 失败，请从项目根目录启动: %v", err)
+		log.Println(".env not found; continuing")
 	}
 
-	dsn := os.Getenv("MYSQL_DSN")
-	if dsn == "" {
-		log.Fatal("MYSQL_DSN 未设置")
-	}
-
-	jwtSecret := os.Getenv("JWT_SECRET")
-	if len(jwtSecret) < 32 {
+	if len(os.Getenv("JWT_SECRET")) < 32 {
 		log.Fatal("JWT_SECRET 至少需要 32 字节")
 	}
 
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
-		TranslateError: true,
-	})
+	// 加载配置
+	configPath := os.Getenv("CONFIG_PATH")
+	if configPath == "" {
+		configPath = "configs/config.yaml"
+	}
+	log.Printf("Loading config from %s", configPath)
+	cfg, usedDefault, err := config.LoadLocalDev(configPath)
 	if err != nil {
-		log.Fatalf("连接 MySQL 失败: %v", err)
+		log.Fatalf("Failed to load config: %v", err)
+	}
+	if usedDefault {
+		log.Printf("Config File %s not found, using default local config", configPath)
+	} else {
+		log.Printf("Config loaded from file: %s", configPath)
 	}
 
-	sqlDB, err := db.DB()
+	// 连接数据库
+	//log.Printf("Database config: %v", cfg.Database)
+	sqlDB, err := db.NewDB(cfg.Database)
 	if err != nil {
-		log.Fatalf("获取数据库连接池失败: %v", err)
+		log.Fatalf("Failed to connect database: %v", err)
 	}
-	defer sqlDB.Close()
+	if err := db.AutoMigrate(sqlDB); err != nil {
+		log.Fatalf("Failed to auto migrate database: %v", err)
+	}
+	defer db.CloseDB(sqlDB)
 
-	log.Println("MySQL 连接成功")
-
-	if err := db.AutoMigrate(&model.User{}); err != nil {
-		log.Fatalf("迁移用户表失败: %v", err)
+	// 连接 Redis (可选，用于缓存)
+	cache, err := rediscache.NewFromEnv(&cfg.Redis)
+	if err != nil {
+		log.Printf("Redis config error (cache disabled): %v", err)
+		cache = nil
+	} else {
+		pingCtx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+		defer cancel()
+		if err := cache.Ping(pingCtx); err != nil {
+			log.Printf("Redis not available (cache disabled): %v", err)
+			_ = cache.Close()
+			cache = nil
+		} else {
+			defer cache.Close()
+			log.Printf("Redis connected (cache enabled)")
+		}
 	}
 
-	router := gin.Default()
+	// 连接 RabbitMQ (可选，用于消息队列)
+	rmq, err := rabbitmq.NewRabbitMQ(&cfg.RabbitMQ)
+	if err != nil {
+		log.Printf("RabbitMQ config error (disabled): %v", err)
+		rmq = nil
+	} else {
+		defer rmq.Close()
+		log.Printf("RabbitMQ connected")
+	}
+	// Pprof
+	pprofServer, err := observability.NewPprofServer(
+		"API",
+		cfg.ObservabilityConfig.Pprof.Enabled,
+		cfg.ObservabilityConfig.Pprof.ApiAddr,
+	)
+	if err != nil {
+		log.Printf("Failed to start API pprof server: %v", err)
+	}
+	if pprofServer != nil {
+		defer pprofServer.Close()
+	}
 
-	router.POST("/account/register", handler.Register(db))
-	router.POST("/account/login", handler.Login(db, []byte(jwtSecret)))
-	router.GET("/account/me", middleware.Auth([]byte(jwtSecret)), handler.Me(db))
-
-	router.GET("/healthz", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
-	})
-
-	if err := router.Run(":8080"); err != nil {
-		log.Fatal(err)
+	// 设置路由
+	r := apphttp.SetRouter(sqlDB, cache, rmq)
+	log.Printf("Server is running on port %d", cfg.Server.Port)
+	if err := r.Run(":" + strconv.Itoa(cfg.Server.Port)); err != nil {
+		log.Fatalf("Failed to run server: %v", err)
 	}
 }

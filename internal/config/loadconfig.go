@@ -150,7 +150,7 @@ func DefaultLocalConfig() Config {
 			Port:     3306,
 			User:     "root",
 			Password: "123456",
-			DBName:   "feedsystem",
+			DBName:   "go_tiktok",
 		},
 		Redis: RedisConfig{
 			Host:     "localhost",
