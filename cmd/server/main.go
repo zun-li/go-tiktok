@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 	"github.com/zun-li/go-tiktok/internal/handler"
 	"github.com/zun-li/go-tiktok/internal/model"
 	"gorm.io/driver/mysql"
@@ -13,9 +14,18 @@ import (
 )
 
 func main() {
+	if err := godotenv.Load(); err != nil {
+		log.Fatalf("加载 .env 失败，请从项目根目录启动: %v", err)
+	}
+
 	dsn := os.Getenv("MYSQL_DSN")
 	if dsn == "" {
 		log.Fatal("MYSQL_DSN 未设置")
+	}
+
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if len(jwtSecret) < 32 {
+		log.Fatal("JWT_SECRET 至少需要 32 字节")
 	}
 
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
@@ -40,6 +50,7 @@ func main() {
 	router := gin.Default()
 
 	router.POST("/account/register", handler.Register(db))
+	router.POST("/account/login", handler.Login(db, []byte(jwtSecret)))
 
 	router.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
