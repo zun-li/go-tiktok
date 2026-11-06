@@ -33,5 +33,6 @@ func SetRouter(db *gorm.DB, cache *rediscache.Client, rmq *rabbitmq.RabbitMQ) *g
 	protected.POST("/uploadAvatar", h.UploadAvatar)
 	protected.POST("/updateProfile", h.UpdateProfile)
 	registerVideoRoutes(r, db, service, cache, rmq)
+	registerInteractionRoutes(r, db, service, cache, rmq)
 	return r
 }
