@@ -42,7 +42,7 @@ type FindByUsernameRequest struct {
 
 type FindByUsernameResponse struct {
 	ID       uint   `json:"id"`
-	Username string `json:"username" binding:"required,min=3,max=32,alphanum"`
+	Username string `json:"username"`
 }
 
 type ChangePasswordRequest struct {
@@ -64,8 +64,8 @@ type LoginResponse struct {
 }
 
 type UpdateProfileRequest struct {
-	AvatarURL string `json:"avatar_url"`
-	Bio       string `json:"bio"`
+	AvatarURL *string `json:"avatar_url"`
+	Bio       *string `json:"bio"`
 }
 
 type RefreshRequest struct {

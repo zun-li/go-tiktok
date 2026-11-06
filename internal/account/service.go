@@ -179,11 +179,11 @@ func (as *AccountService) FindAll(ctx context.Context) ([]*Account, error) {
 
 func (as *AccountService) UpdateProfile(ctx context.Context, accountID uint, req *UpdateProfileRequest) error {
 	updates := map[string]interface{}{}
-	if req.Bio != "" {
-		updates["bio"] = strings.TrimSpace(req.Bio)
+	if req.Bio != nil {
+		updates["bio"] = strings.TrimSpace(*req.Bio)
 	}
-	if req.AvatarURL != "" {
-		updates["avatar_url"] = strings.TrimSpace(req.AvatarURL)
+	if req.AvatarURL != nil {
+		updates["avatar_url"] = strings.TrimSpace(*req.AvatarURL)
 	}
 	if len(updates) == 0 {
 		return errors.New("nothing to update")

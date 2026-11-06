@@ -15,11 +15,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	mysqldriver "github.com/go-sql-driver/mysql"
+	goredis "github.com/redis/go-redis/v9"
 	"github.com/zun-li/go-tiktok/internal/account"
 	appdb "github.com/zun-li/go-tiktok/internal/db"
 	apphttp "github.com/zun-li/go-tiktok/internal/http"
 	"github.com/zun-li/go-tiktok/internal/message"
+	rediscache "github.com/zun-li/go-tiktok/internal/middleware/redis"
 	"github.com/zun-li/go-tiktok/internal/video"
 	"github.com/zun-li/go-tiktok/internal/worker"
 	"gorm.io/driver/mysql"
@@ -38,6 +41,15 @@ func decodeJSON[T any](t *testing.T, body []byte) T {
 // TEST_MYSQL_DSN must point to a database ending in _test. Each run creates
 // and removes a separate database, leaving application data untouched.
 func TestIntegration(t *testing.T) {
+	if os.Getenv("TEST_MYSQL_DSN") == "" {
+		t.Skip("set TEST_MYSQL_DSN or run the Compose tests service")
+	}
+	for _, cached := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cache_%v", cached), func(t *testing.T) { runIntegration(t, cached) })
+	}
+}
+
+func runIntegration(t *testing.T, cached bool) {
 	dsn := os.Getenv("TEST_MYSQL_DSN")
 	if dsn == "" {
 		t.Skip("set TEST_MYSQL_DSN or run the Compose tests service")
@@ -76,7 +88,13 @@ func TestIntegration(t *testing.T) {
 	}
 	t.Setenv("JWT_SECRET", "integration-signing-secret-at-least-32-bytes")
 	t.Chdir(t.TempDir())
-	router := apphttp.SetRouter(db, nil, nil)
+	var cache *rediscache.Client
+	if cached {
+		redisServer := miniredis.RunT(t)
+		cache = rediscache.NewClient(goredis.NewClient(&goredis.Options{Addr: redisServer.Addr()}), "test:")
+		defer cache.Close()
+	}
+	router := apphttp.SetRouter(db, cache, nil)
 	request := func(method, path string, body any, token string, expected int) []byte {
 		t.Helper()
 		raw, err := json.Marshal(body)
@@ -148,6 +166,11 @@ func TestIntegration(t *testing.T) {
 	alice.Token = renamed.Token
 	avatar := upload("/account/uploadAvatar", "avatar.png", []byte("avatar fixture"), alice.Token)
 	request("POST", "/account/updateProfile", map[string]string{"bio": "test profile", "avatar_url": avatar}, alice.Token, 200)
+	request("POST", "/account/updateProfile", map[string]string{"bio": ""}, alice.Token, 200)
+	profile := decodeJSON[account.Account](t, request("GET", "/account/me", nil, alice.Token, 200))
+	if profile.Bio != "" {
+		t.Fatal("profile bio could not be cleared")
+	}
 	media := []byte("video upload fixture")
 	play := upload("/video/uploadVideo", "video.mp4", media, alice.Token)
 	cover := upload("/video/uploadCover", "cover.png", []byte("cover fixture"), alice.Token)
