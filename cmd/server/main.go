@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	"github.com/zun-li/go-tiktok/internal/handler"
+	"github.com/zun-li/go-tiktok/internal/middleware"
 	"github.com/zun-li/go-tiktok/internal/model"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -51,6 +52,7 @@ func main() {
 
 	router.POST("/account/register", handler.Register(db))
 	router.POST("/account/login", handler.Login(db, []byte(jwtSecret)))
+	router.GET("/account/me", middleware.Auth([]byte(jwtSecret)), handler.Me(db))
 
 	router.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
