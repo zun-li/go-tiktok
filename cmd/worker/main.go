@@ -227,7 +227,7 @@ func declareSocialTopology(ch *amqp.Channel) error {
 		false,
 		false,
 		false,
-		amqp.Table{"x-dead-letter-exchange": mqrabbit.DLXExchange},
+		amqp.Table{"x-dead-letter-exchange": mqrabbit.DLXExchange, "x-dead-letter-routing-key": socialQueue},
 	)
 	if err != nil {
 		return err
@@ -264,7 +264,7 @@ func declarePopularityTopology(ch *amqp.Channel) error {
 		false,
 		false,
 		false,
-		amqp.Table{"x-dead-letter-exchange": mqrabbit.DLXExchange},
+		amqp.Table{"x-dead-letter-exchange": mqrabbit.DLXExchange, "x-dead-letter-routing-key": popularityQueue},
 	)
 	if err != nil {
 		return err
@@ -298,7 +298,7 @@ func declareLikeTopology(ch *amqp.Channel) error {
 		false,
 		false,
 		false,
-		amqp.Table{"x-dead-letter-exchange": mqrabbit.DLXExchange},
+		amqp.Table{"x-dead-letter-exchange": mqrabbit.DLXExchange, "x-dead-letter-routing-key": likeQueue},
 	)
 	if err != nil {
 		return err
@@ -332,7 +332,7 @@ func declareCommentTopology(ch *amqp.Channel) error {
 		false,
 		false,
 		false,
-		amqp.Table{"x-dead-letter-exchange": mqrabbit.DLXExchange},
+		amqp.Table{"x-dead-letter-exchange": mqrabbit.DLXExchange, "x-dead-letter-routing-key": commentQueue},
 	)
 	if err != nil {
 		return err

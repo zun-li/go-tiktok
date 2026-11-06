@@ -28,7 +28,7 @@ func DeclareDLX(ch *amqp.Channel, queueName string) error {
 	if err != nil {
 		return err
 	}
-	if err := ch.QueueBind(dlxQueue, "#", DLXExchange, false, nil); err != nil {
+	if err := ch.QueueBind(dlxQueue, queueName, DLXExchange, false, nil); err != nil {
 		return err
 	}
 	log.Printf("DLX ready: exchange=%s queue=%s", DLXExchange, dlxQueue)

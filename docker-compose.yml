@@ -134,6 +134,19 @@ services:
       retries: 3
 
 
+  rabbitmq-test:
+    profiles: ["test"]
+    image: rabbitmq:3-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: test
+      RABBITMQ_DEFAULT_PASS: testpass
+      RABBITMQ_DEFAULT_VHOST: go_tiktok_test
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   tests:
     profiles: ["test"]
     build:
@@ -141,9 +154,12 @@ services:
       dockerfile: Dockerfile
       target: test
     environment:
+      TEST_RABBITMQ_URL: amqp://test:testpass@rabbitmq-test:5672/go_tiktok_test
       TEST_MYSQL_DSN: root:${MYSQL_ROOT_PASSWORD:-123456}@tcp(mysql:3306)/go_tiktok_test?charset=utf8mb4&parseTime=True&loc=Local
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
     depends_on:
+      rabbitmq-test:
+        condition: service_healthy
       mysql:
         condition: service_healthy
 

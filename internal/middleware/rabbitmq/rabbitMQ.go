@@ -74,7 +74,7 @@ func DeclareTopic(ch *amqp.Channel, exchange string, queue string, bindingKey st
 		false,
 		false,
 		false,
-		amqp.Table{"x-dead-letter-exchange": DLXExchange},
+		amqp.Table{"x-dead-letter-exchange": DLXExchange, "x-dead-letter-routing-key": queue},
 	)
 	if err != nil {
 		return err

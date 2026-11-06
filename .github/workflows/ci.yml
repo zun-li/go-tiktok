@@ -19,6 +19,19 @@ jobs:
     name: Backend
     runs-on: ubuntu-latest
     services:
+      rabbitmq:
+        image: rabbitmq:3-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: test
+          RABBITMQ_DEFAULT_PASS: testpass
+          RABBITMQ_DEFAULT_VHOST: go_tiktok_test
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd="rabbitmq-diagnostics -q ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
       mysql:
         image: mysql:8.0
         env:
@@ -31,6 +44,7 @@ jobs:
           --health-timeout=5s
           --health-retries=20
     env:
+      TEST_RABBITMQ_URL: amqp://test:testpass@127.0.0.1:5672/go_tiktok_test
       TEST_MYSQL_DSN: root:testpass@tcp(127.0.0.1:3306)/go_tiktok_test?charset=utf8mb4&parseTime=True&loc=Local
     steps:
       - name: Checkout

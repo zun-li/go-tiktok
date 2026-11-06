@@ -68,8 +68,8 @@ func (w *PopularityWorker) handleDelivery(ctx context.Context, d amqp.Delivery) 
 		}
 		if err := w.process(ctx, d.Body); err != nil {
 			if i >= maxRetries {
-				log.Printf("popularity worker: 重试 %d 次后仍失败, 丢弃: %v", maxRetries, err)
-				_ = d.Ack(false)
+				log.Printf("popularity worker: 重试 %d 次后仍失败, 转入死信队列: %v", maxRetries, err)
+				_ = d.Nack(false, false)
 				return
 			}
 			wait := time.Duration(1<<uint(i)) * time.Second
